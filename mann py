@@ -1,0 +1,114 @@
+
+
+from flask import Flask , render_template , request , jsonify
+from playwright.sync_api import sync_playwright
+app = Flask(__name__)
+
+
+def classify_site(link,title):
+    link_lower = link.lower() if link else ''
+    title_lower = title.lower() if title else ''
+    # HTTPS://Www.GooGLE.COM => https://www.google.com
+    # RakwAN alI => rakwan ali
+    #----------------- مواقع تواصل --------------
+    social_sites = {
+        "Facebook":["facebook.com","facebook",'fb'],
+        "Youtube":["youtube.com","youtube","youtu.be"],
+        "Telegram":["telegram.org","t.me","telegram"]
+    }
+    for site , keywords in social_sites.items():
+        if any(k in link_lower or k in title_lower for k in keywords):
+            return site
+    #---------------- منصات تعليمية --------------
+    education_sites = {
+        "Udemy":['udemy.com','udemy'],
+        "Coursera": ["coursera.org","coursera"]
+    }
+    for site , keywords in education_sites.items():
+        if any(k in link_lower or k in title_lower for k in keywords):
+            return site
+    #---------------- مواقع اخبارية ----------------
+    news_sites = ['cnn.com','bbc.com','aljaeera.com']
+    if any(k in link_lower or k in title_lower for k in news_sites ):
+        return "News Sites"
+    #---------------- ايميلات ------------------------
+    if any(email_word in title_lower for email_word in ["@","mail","بريد"]):
+        return "Emails"
+    #---------------- ارقام هواتف -------------------
+    if any(phone_word in title_lower for phone_word in ['phone','mobile','رقم','هاتف']):
+        return "Phone Numbers"
+    #---------------- مواقع رسمية -------------------
+    official_sites = ['.edu','.org','gov','site','website']
+    if any(k in title_lower for k in official_sites):
+        return "Official Sites"
+    #---------------- general site --------------------
+    general_sites = [
+        "github.io","gitlab.com","arcivhe.org"
+    ]
+    if any(k in link_lower or k in title_lower for k in general_sites):
+        return "Websites"
+    return "websites"
+
+def osint_ex(query):
+    try:
+        with sync_playwright() as pr :
+            browser =  pr.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            search_link = f"https://duckduckgo.com/?q={query}&t=h_&ia=web"
+            page.goto(search_link,timeout=60000,wait_until='load')
+            num_pages = 5
+            all_results = []
+            for _ in range(num_pages):
+                page.wait_for_selector('article[data-testid="result"]',timeout=20000)
+                resutls = page.query_selector_all('article[data-testid="result"]')
+                for result in resutls:
+                    try:
+                        title_element = result.query_selector('h2 a')
+                        link_element = result.query_selector('h2 a')
+                        image_element = result.query_selector('img')
+                        if title_element and link_element:
+                            title = title_element.inner_text()
+                            link = link_element.get_attribute('href')
+                            image = image_element.get_attribute('src') if image_element else None
+                            site_type = classify_site(link,title)
+
+                            all_results.append(
+                                {
+                                    "title":title , 
+                                    "link" : link ,
+                                    "image" : image ,
+                                    "type" : site_type
+                                }
+                            )
+                    except Exception:
+                        continue
+                next_btn = page.query_selector('button#more-results')
+                if next_btn:
+                    next_btn.click()
+                    page.wait_for_timeout(4000)
+                else:
+                    break
+            browser.close()
+            return all_results
+    except Exception as e :
+        print(f'Error found {e}')   
+        return []                                    
+
+
+
+
+@app.route('/')
+def index():
+    return render_template("index.html")
+
+
+@app.route('/search',methods=["POST"])
+def search():
+    query = request.form.get("query")
+    results = osint_ex(query)
+    return jsonify(results)
+
+
+if __name__ == '__main__':
+    app.run(debug=False , use_reloader=False)
